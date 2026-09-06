@@ -1,0 +1,13 @@
+
+# Generated files
+node_modules/
+dist/
+.wrangler/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Local Git backup
+.git-old/
