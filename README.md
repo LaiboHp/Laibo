@@ -88,3 +88,4 @@ This project does not currently declare a license in the repository metadata.
 ## Project status
 
 Laibo is a lightweight badge generator and UI prototype focused on fast badge creation and customization for developer-facing services.
+---
