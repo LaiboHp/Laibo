@@ -39,7 +39,7 @@ The interface includes a live badge preview, styling controls, and copyable badg
 │   ├── index.ts
 │   ├── main.tsx
 │   ├── providers.ts
-��   ├── style.css
+|   ├── style.css
 │   └── badges/
 └── README.md
 ```
