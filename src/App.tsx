@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from "react";
 import type { BadgeStyle, Provider } from "./badges/types";
 import { renderBadge } from "./badges/renderer";
@@ -29,7 +30,7 @@ export default function App() {
     () => localStorage.getItem("laibo-theme") || "light"
   );
 
-  const currentProvider = providers.find((p) => p.id === provider)!;
+  const currentProvider = providers.find((item) => item.id === provider)!;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -48,15 +49,15 @@ export default function App() {
         let path = "";
 
         if (provider === "github") {
-          const parts = target.split("/");
+          const [owner, repo] = target.split("/");
 
-          if (parts.length !== 2) {
+          if (!owner || !repo) {
             setMessage("invalid");
             return;
           }
 
-          path = `/api/github/${encodeURIComponent(parts[0])}/${encodeURIComponent(
-            parts[1]
+          path = `/api/github/${encodeURIComponent(owner)}/${encodeURIComponent(
+            repo
           )}/${metric}`;
         } else if (provider === "npm") {
           path = `/api/npm/${metric}/${encodeURIComponent(target)}`;
@@ -73,8 +74,11 @@ export default function App() {
           signal: controller.signal
         });
 
-        const data = await response.json();
+        if (!response.ok) {
+          throw new Error("Request failed");
+        }
 
+        const data = await response.json();
         setMessage(String(data.message ?? "error"));
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
@@ -122,16 +126,15 @@ export default function App() {
   );
 
   const badgeUrl = useMemo(() => {
-    if (provider === "static") {
-      return `/static/${encodeURIComponent(label)}/${encodeURIComponent(
-        message
-      )}`;
-    }
-
     let path = "";
 
-    if (provider === "github") {
+    if (provider === "static") {
+      path = `/static/${encodeURIComponent(label)}/${encodeURIComponent(
+        message
+      )}`;
+    } else if (provider === "github") {
       const [owner, repo] = target.split("/");
+
       path = `/github/${encodeURIComponent(owner || "")}/${encodeURIComponent(
         repo || ""
       )}/${metric}`;
@@ -160,7 +163,7 @@ export default function App() {
       params.set("message", message);
     }
 
-    return path + "?" + params.toString();
+    return `${path}?${params.toString()}`;
   }, [
     provider,
     target,
@@ -184,34 +187,33 @@ export default function App() {
   function selectProvider(next: Provider) {
     setProvider(next);
 
-    const nextProvider = providers.find((p) => p.id === next);
+    const nextProvider = providers.find((item) => item.id === next);
 
-    if (nextProvider) {
-      setMetric(nextProvider.metrics[0].id);
+    if (!nextProvider) return;
 
-      if (next === "static") {
-        setLabel("build");
-        setMessage("passing");
-        setCustomMessage(true);
-      } else {
-        setCustomMessage(false);
-      }
+    setMetric(nextProvider.metrics[0].id);
+
+    if (next === "static") {
+      setLabel("build");
+      setMessage("passing");
+      setCustomMessage(true);
+    } else {
+      setCustomMessage(false);
     }
   }
 
   return (
     <div className="app">
       <header className="nav">
-        <div className="brand">
+        <a className="brand" href="/">
           <span className="brand-mark">L</span>
           <span>Laibo</span>
-        </div>
+        </a>
 
         <nav>
           <a href="#builder">Builder</a>
-          <a href="#templates">Templates</a>
+          <a href="#templates">Styles</a>
           <a href="#providers">Providers</a>
-          <a href="#docs">Docs</a>
         </nav>
 
         <button
@@ -219,45 +221,28 @@ export default function App() {
           onClick={() =>
             setTheme((value) => (value === "light" ? "dark" : "light"))
           }
+          aria-label="Toggle theme"
         >
           {theme === "light" ? "Dark" : "Light"}
         </button>
       </header>
 
       <main>
-        <section className="intro">
-          <div>
-            <span className="eyebrow">BADGE INFRASTRUCTURE</span>
-            <h1>Build badges your way.</h1>
-            <p>
-              Dynamic and static badges for Git repositories, packages,
-              Minecraft projects, Discord servers and more.
-            </p>
-          </div>
-        </section>
-
         <section className="builder" id="builder">
-          <div className="panel controls">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">SOURCE</span>
-                <h2>Choose a provider</h2>
-              </div>
+          <div className="controls">
+            <div className="title">
+              <h1>Badge builder</h1>
+              <p>Create a badge and copy its URL.</p>
             </div>
 
-            <div className="provider-grid">
+            <div className="provider-tabs">
               {providers.map((item) => (
                 <button
                   key={item.id}
-                  className={`provider ${
-                    provider === item.id ? "selected" : ""
-                  }`}
+                  className={provider === item.id ? "selected" : ""}
                   onClick={() => selectProvider(item.id)}
                 >
-                  <strong>{item.name}</strong>
-                  <span>
-                    {item.id === "static" ? "No API" : item.description}
-                  </span>
+                  {item.name}
                 </button>
               ))}
             </div>
@@ -311,7 +296,7 @@ export default function App() {
                 />
               </label>
 
-              <label className={customMessage ? "" : "muted-field"}>
+              <label>
                 <span>Message</span>
 
                 <input
@@ -329,84 +314,78 @@ export default function App() {
                     setCustomMessage(event.target.checked)
                   }
                 />
-                <span>Use custom message</span>
+                <span>Custom message</span>
               </label>
             </div>
 
-            <div className="subheading">
-              <span className="eyebrow">STYLE</span>
-              <h3>Appearance</h3>
-            </div>
+            <div className="options">
+              <div>
+                <h2>Style</h2>
 
-            <div className="style-grid">
-              {badgeStyles.map((item) => (
-                <button
-                  key={item.id}
-                  className={`style-card ${
-                    style === item.id ? "selected" : ""
-                  }`}
-                  onClick={() => setStyle(item.id)}
-                >
-                  <strong>{item.name}</strong>
-                  <span>{item.description}</span>
-                </button>
-              ))}
-            </div>
+                <div className="style-list">
+                  {badgeStyles.map((item) => (
+                    <button
+                      key={item.id}
+                      className={style === item.id ? "selected" : ""}
+                      onClick={() => setStyle(item.id)}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="color-grid">
-              <ColorInput
-                label="Label"
-                value={labelColor}
-                onChange={setLabelColor}
-              />
+              <div className="color-grid">
+                <ColorInput
+                  label="Label"
+                  value={labelColor}
+                  onChange={setLabelColor}
+                />
 
-              <ColorInput
-                label="Message"
-                value={messageColor}
-                onChange={setMessageColor}
-              />
+                <ColorInput
+                  label="Message"
+                  value={messageColor}
+                  onChange={setMessageColor}
+                />
 
-              <ColorInput
-                label="Text"
-                value={textColor}
-                onChange={setTextColor}
-              />
-            </div>
+                <ColorInput
+                  label="Text"
+                  value={textColor}
+                  onChange={setTextColor}
+                />
+              </div>
 
-            <div className="range-grid">
-              <Range
-                label="Height"
-                value={height}
-                min={16}
-                max={48}
-                onChange={setHeight}
-              />
+              <div className="range-grid">
+                <Range
+                  label="Height"
+                  value={height}
+                  min={16}
+                  max={48}
+                  onChange={setHeight}
+                />
 
-              <Range
-                label="Radius"
-                value={radius}
-                min={0}
-                max={20}
-                onChange={setRadius}
-              />
+                <Range
+                  label="Radius"
+                  value={radius}
+                  min={0}
+                  max={20}
+                  onChange={setRadius}
+                />
 
-              <Range
-                label="Font"
-                value={fontSize}
-                min={8}
-                max={18}
-                onChange={setFontSize}
-              />
+                <Range
+                  label="Font"
+                  value={fontSize}
+                  min={8}
+                  max={18}
+                  onChange={setFontSize}
+                />
+              </div>
             </div>
           </div>
 
-          <aside className="panel preview-panel">
-            <div className="preview-header">
-              <div>
-                <span className="eyebrow">LIVE PREVIEW</span>
-                <h2>{loading ? "Updating..." : "Your badge"}</h2>
-              </div>
-
+          <aside className="preview">
+            <div className="preview-top">
+              <h2>{loading ? "Updating..." : "Preview"}</h2>
               <span className="status-dot" />
             </div>
 
@@ -415,14 +394,11 @@ export default function App() {
             </div>
 
             <div className="output">
-              <span>Badge URL</span>
-
+              <span>URL</span>
               <code>{badgeUrl}</code>
 
               <div className="actions">
-                <button onClick={() => copy(badgeUrl)}>
-                  Copy URL
-                </button>
+                <button onClick={() => copy(badgeUrl)}>Copy URL</button>
 
                 <button
                   onClick={() =>
@@ -438,29 +414,18 @@ export default function App() {
 
             <div className="output">
               <span>SVG</span>
-
               <code>{previewSvg.slice(0, 140)}...</code>
 
-              <button onClick={() => copy(previewSvg)}>
-                Copy SVG
-              </button>
+              <button onClick={() => copy(previewSvg)}>Copy SVG</button>
             </div>
           </aside>
         </section>
 
-        <section id="templates" className="content-section">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">TEMPLATES</span>
-              <h2>More styles. Same API.</h2>
-            </div>
-            <p>
-              Pick a visual language and customize it without changing your
-              badge endpoint.
-            </p>
-          </div>
+        <section id="templates" className="section">
+          <h2>Styles</h2>
+          <p>Choose a style for your badge.</p>
 
-          <div className="template-strip">
+          <div className="template-list">
             {badgeStyles.slice(0, 10).map((item) => (
               <button
                 key={item.id}
@@ -483,37 +448,31 @@ export default function App() {
                   )}`}
                   alt={item.name}
                 />
-                <strong>{item.name}</strong>
+
+                <span>{item.name}</span>
               </button>
             ))}
           </div>
         </section>
 
-        <section id="providers" className="content-section">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">ECOSYSTEM</span>
-              <h2>Built for more than GitHub.</h2>
-            </div>
-          </div>
+        <section id="providers" className="section">
+          <h2>Providers</h2>
+          <p>Sources currently supported by Laibo.</p>
 
           <div className="provider-list">
             {providers.map((item) => (
               <div className="provider-row" key={item.id}>
                 <strong>{item.name}</strong>
                 <span>{item.description}</span>
-                <small>
-                  {item.id === "static" ? "READY" : "SUPPORTED"}
-                </small>
               </div>
             ))}
           </div>
         </section>
       </main>
 
-      <footer id="docs">
+      <footer>
         <strong>Laibo</strong>
-        <span>Fast badge infrastructure for developers.</span>
+        <span>Badge infrastructure for developers.</span>
       </footer>
     </div>
   );
@@ -530,7 +489,7 @@ function ColorInput({
 }) {
   return (
     <label>
-      <span>{label} color</span>
+      <span>{label}</span>
 
       <div className="color-input">
         <input
@@ -577,3 +536,4 @@ function Range({
     </label>
   );
 }
+
