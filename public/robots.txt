@@ -1,0 +1,5 @@
+
+User-agent: *
+Allow: /
+
+Sitemap: https://laibo.www0abdb.workers.dev/sitemap.xml

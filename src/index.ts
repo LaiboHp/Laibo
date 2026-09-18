@@ -1,17 +1,5 @@
-interface BadgeData {
-  label: string;
-  message: string;
-}
-
-type Metric =
-  | "stars"
-  | "forks"
-  | "issues"
-  | "license"
-  | "downloads"
-  | "followers"
-  | "version"
-  | "weekly-downloads";
+import { renderBadge } from "./badges/renderer";
+import type { BadgeStyle } from "./badges/types";
 
 interface GitHubRepository {
   stargazers_count: number;
@@ -27,6 +15,7 @@ interface ModrinthProject {
   downloads: number;
   followers: number;
   slug: string | null;
+  latest_version?: string | null;
 }
 
 interface NpmPackage {
@@ -34,37 +23,64 @@ interface NpmPackage {
   "dist-tags"?: {
     latest?: string;
   };
-  downloads?: {
-    weekly?: number;
-  };
 }
+
+// ═══════════════════════════════════════
+// Worker
+// ═══════════════════════════════════════
 
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // ═══════════════════════════════════════
     // Health
-    if (path === "/" || path === "/api") {
+    // ═══════════════════════════════════════
+
+    if (path === "/") {
       return json({
         name: "Laibo",
         status: "ok",
-        providers: ["github", "modrinth", "npm", "static"],
+        providers: [
+          "github",
+          "modrinth",
+          "npm",
+          "static",
+        ],
       });
     }
 
-    // ─────────────────────────────
-    // GitHub
-    // /github/owner/repo/stars
+    // ═══════════════════════════════════════
+    // API - GitHub
     // /api/github/owner/repo/stars
-    // ─────────────────────────────
+    // ═══════════════════════════════════════
 
-    const github = path.match(
-      /^\/(?:api\/)?github\/([^/]+)\/([^/]+)\/(stars|forks|issues|license)$/
+    const githubApi = path.match(
+      /^\/api\/github\/([^/]+)\/([^/]+)\/(stars|forks|issues|license)$/
     );
 
-    if (github) {
-      const [, owner, repo, metric] = github;
+    if (githubApi) {
+      const [, owner, repo, metric] = githubApi;
+
+      return githubApiResponse(
+        owner,
+        repo,
+        metric as "stars" | "forks" | "issues" | "license"
+      );
+    }
+
+    // ═══════════════════════════════════════
+    // Badge - GitHub
+    // /github/owner/repo/stars
+    // ═══════════════════════════════════════
+
+    const githubBadgeRoute = path.match(
+      /^\/github\/([^/]+)\/([^/]+)\/(stars|forks|issues|license)$/
+    );
+
+    if (githubBadgeRoute) {
+      const [, owner, repo, metric] = githubBadgeRoute;
 
       return githubBadge(
         owner,
@@ -74,19 +90,35 @@ export default {
       );
     }
 
-    // ─────────────────────────────
-    // Modrinth
-    // /modrinth/project/downloads
-    // /modrinth/project/followers
-    // /modrinth/project/version
-    // ─────────────────────────────
+    // ═══════════════════════════════════════
+    // API - Modrinth
+    // /api/modrinth/project/downloads
+    // ═══════════════════════════════════════
 
-    const modrinth = path.match(
-      /^\/(?:api\/)?modrinth\/([^/]+)\/(downloads|followers|version)$/
+    const modrinthApi = path.match(
+      /^\/api\/modrinth\/([^/]+)\/(downloads|followers|version)$/
     );
 
-    if (modrinth) {
-      const [, project, metric] = modrinth;
+    if (modrinthApi) {
+      const [, project, metric] = modrinthApi;
+
+      return modrinthApiResponse(
+        project,
+        metric as "downloads" | "followers" | "version"
+      );
+    }
+
+    // ═══════════════════════════════════════
+    // Badge - Modrinth
+    // /modrinth/project/downloads
+    // ═══════════════════════════════════════
+
+    const modrinthBadgeRoute = path.match(
+      /^\/modrinth\/([^/]+)\/(downloads|followers|version)$/
+    );
+
+    if (modrinthBadgeRoute) {
+      const [, project, metric] = modrinthBadgeRoute;
 
       return modrinthBadge(
         project,
@@ -95,19 +127,39 @@ export default {
       );
     }
 
-    // ─────────────────────────────
-    // npm
+    // ═══════════════════════════════════════
+    // API - npm
+    // /api/npm/downloads/package
+    // /api/npm/weekly-downloads/package
+    // /api/npm/version/package
+    // ═══════════════════════════════════════
+
+    const npmApi = path.match(
+      /^\/api\/npm\/(downloads|weekly-downloads|version)\/(.+)$/
+    );
+
+    if (npmApi) {
+      const [, metric, packageName] = npmApi;
+
+      return npmApiResponse(
+        decodeURIComponent(packageName),
+        metric as "downloads" | "weekly-downloads" | "version"
+      );
+    }
+
+    // ═══════════════════════════════════════
+    // Badge - npm
     // /npm/downloads/package
     // /npm/weekly-downloads/package
     // /npm/version/package
-    // ─────────────────────────────
+    // ═══════════════════════════════════════
 
-    const npm = path.match(
-      /^\/(?:api\/)?npm\/(downloads|weekly-downloads|version)\/(.+)$/
+    const npmBadgeRoute = path.match(
+      /^\/npm\/(downloads|weekly-downloads|version)\/(.+)$/
     );
 
-    if (npm) {
-      const [, metric, packageName] = npm;
+    if (npmBadgeRoute) {
+      const [, metric, packageName] = npmBadgeRoute;
 
       return npmBadge(
         decodeURIComponent(packageName),
@@ -116,13 +168,50 @@ export default {
       );
     }
 
-    // ─────────────────────────────
-    // Static
+    // ═══════════════════════════════════════
+    // API - Discord
+    // ═══════════════════════════════════════
+
+    const discordApi = path.match(
+      /^\/api\/discord\/([^/]+)\/(members|online)$/
+    );
+
+    if (discordApi) {
+      const [, target, metric] = discordApi;
+
+      return json({
+        target,
+        metric,
+        message: "unsupported",
+      });
+    }
+
+    // ═══════════════════════════════════════
+    // Badge - Discord
+    // ═══════════════════════════════════════
+
+    const discordBadgeRoute = path.match(
+      /^\/discord\/([^/]+)\/(members|online)$/
+    );
+
+    if (discordBadgeRoute) {
+      const [, target, metric] = discordBadgeRoute;
+
+      return createBadgeResponse(
+        metric,
+        "unsupported",
+        url.searchParams,
+        501
+      );
+    }
+
+    // ═══════════════════════════════════════
+    // Static Badge
     // /static/label/message
-    // ─────────────────────────────
+    // ═══════════════════════════════════════
 
     const staticBadge = path.match(
-      /^\/(?:api\/)?static\/([^/]+)\/([^/]+)$/
+      /^\/static\/([^/]+)\/([^/]+)$/
     );
 
     if (staticBadge) {
@@ -135,6 +224,10 @@ export default {
       );
     }
 
+    // ═══════════════════════════════════════
+    // Not Found
+    // ═══════════════════════════════════════
+
     return new Response("Not Found", {
       status: 404,
       headers: {
@@ -145,18 +238,19 @@ export default {
 };
 
 // ═══════════════════════════════════════
-// GitHub
+// GitHub API
 // ═══════════════════════════════════════
 
-async function githubBadge(
+async function githubApiResponse(
   owner: string,
   repo: string,
-  metric: "stars" | "forks" | "issues" | "license",
-  params: URLSearchParams
+  metric: "stars" | "forks" | "issues" | "license"
 ): Promise<Response> {
   try {
     const response = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      `https://api.github.com/repos/${encodeURIComponent(
+        owner
+      )}/${encodeURIComponent(repo)}`,
       {
         headers: {
           Accept: "application/vnd.github+json",
@@ -166,15 +260,17 @@ async function githubBadge(
     );
 
     if (!response.ok) {
-      return createBadgeResponse(
-        "github",
-        "not found",
-        params,
-        404
+      return json(
+        {
+          error: "Repository not found",
+          message: "not found",
+        },
+        response.status
       );
     }
 
-    const data = (await response.json()) as GitHubRepository;
+    const data =
+      (await response.json()) as GitHubRepository;
 
     let value = "";
 
@@ -192,32 +288,112 @@ async function githubBadge(
         break;
 
       case "license":
-        value = data.license?.spdx_id ?? "none";
+        value = data.license?.spdx_id || "none";
+        break;
+    }
+
+    return json({
+      provider: "github",
+      target: `${owner}/${repo}`,
+      metric,
+      message: value,
+    });
+  } catch {
+    return json(
+      {
+        error: "GitHub request failed",
+        message: "error",
+      },
+      502
+    );
+  }
+}
+
+// ═══════════════════════════════════════
+// GitHub Badge
+// ═══════════════════════════════════════
+
+async function githubBadge(
+  owner: string,
+  repo: string,
+  metric: "stars" | "forks" | "issues" | "license",
+  params: URLSearchParams
+): Promise<Response> {
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(
+        owner
+      )}/${encodeURIComponent(repo)}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "Laibo",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return createBadgeResponse(
+        params.get("label") || "github",
+        "not found",
+        params,
+        response.status
+      );
+    }
+
+    const data =
+      (await response.json()) as GitHubRepository;
+
+    let value = "";
+
+    switch (metric) {
+      case "stars":
+        value = formatNumber(data.stargazers_count);
+        break;
+
+      case "forks":
+        value = formatNumber(data.forks_count);
+        break;
+
+      case "issues":
+        value = formatNumber(data.open_issues_count);
+        break;
+
+      case "license":
+        value = data.license?.spdx_id || "none";
         break;
     }
 
     return createBadgeResponse(
       params.get("label") || metric,
-      value,
+      params.has("message")
+        ? params.get("message") || value
+        : value,
       params
     );
   } catch {
-    return createBadgeResponse("github", "error", params, 502);
+    return createBadgeResponse(
+      params.get("label") || "github",
+      "error",
+      params,
+      502
+    );
   }
 }
 
 // ═══════════════════════════════════════
-// Modrinth
+// Modrinth API
 // ═══════════════════════════════════════
 
-async function modrinthBadge(
+async function modrinthApiResponse(
   project: string,
-  metric: "downloads" | "followers" | "version",
-  params: URLSearchParams
+  metric: "downloads" | "followers" | "version"
 ): Promise<Response> {
   try {
     const response = await fetch(
-      `https://api.modrinth.com/v2/project/${encodeURIComponent(project)}`,
+      `https://api.modrinth.com/v2/project/${encodeURIComponent(
+        project
+      )}`,
       {
         headers: {
           Accept: "application/json",
@@ -227,15 +403,17 @@ async function modrinthBadge(
     );
 
     if (!response.ok) {
-      return createBadgeResponse(
-        "modrinth",
-        "not found",
-        params,
-        404
+      return json(
+        {
+          error: "Project not found",
+          message: "not found",
+        },
+        response.status
       );
     }
 
-    const data = (await response.json()) as ModrinthProject;
+    const data =
+      (await response.json()) as ModrinthProject;
 
     let value = "";
 
@@ -249,32 +427,43 @@ async function modrinthBadge(
         break;
 
       case "version":
-        value = data.slug || "unknown";
+        value =
+          data.latest_version ||
+          "unknown";
         break;
     }
 
-    return createBadgeResponse(
-      params.get("label") || metric,
-      value,
-      params
-    );
+    return json({
+      provider: "modrinth",
+      target: project,
+      metric,
+      message: value,
+    });
   } catch {
-    return createBadgeResponse("modrinth", "error", params, 502);
+    return json(
+      {
+        error: "Modrinth request failed",
+        message: "error",
+      },
+      502
+    );
   }
 }
 
 // ═══════════════════════════════════════
-// npm
+// Modrinth Badge
 // ═══════════════════════════════════════
 
-async function npmBadge(
-  packageName: string,
-  metric: "downloads" | "weekly-downloads" | "version",
+async function modrinthBadge(
+  project: string,
+  metric: "downloads" | "followers" | "version",
   params: URLSearchParams
 ): Promise<Response> {
   try {
     const response = await fetch(
-      `https://registry.npmjs.org/${encodeURIComponent(packageName)}`,
+      `https://api.modrinth.com/v2/project/${encodeURIComponent(
+        project
+      )}`,
       {
         headers: {
           Accept: "application/json",
@@ -285,38 +474,188 @@ async function npmBadge(
 
     if (!response.ok) {
       return createBadgeResponse(
-        "npm",
+        params.get("label") || "modrinth",
         "not found",
         params,
-        404
+        response.status
       );
     }
 
-    const data = (await response.json()) as NpmPackage;
+    const data =
+      (await response.json()) as ModrinthProject;
 
     let value = "";
 
-    if (metric === "version") {
-      value = data["dist-tags"]?.latest || "unknown";
-    } else {
-      const downloads = await getNpmDownloads(packageName);
+    switch (metric) {
+      case "downloads":
+        value = formatNumber(data.downloads);
+        break;
 
-      if (metric === "weekly-downloads") {
-        value = formatNumber(downloads);
-      } else {
-        value = formatNumber(downloads);
-      }
+      case "followers":
+        value = formatNumber(data.followers);
+        break;
+
+      case "version":
+        value =
+          data.latest_version ||
+          "unknown";
+        break;
     }
 
     return createBadgeResponse(
       params.get("label") || metric,
-      value,
+      params.has("message")
+        ? params.get("message") || value
+        : value,
       params
     );
   } catch {
-    return createBadgeResponse("npm", "error", params, 502);
+    return createBadgeResponse(
+      params.get("label") || "modrinth",
+      "error",
+      params,
+      502
+    );
   }
 }
+
+// ═══════════════════════════════════════
+// npm API
+// ═══════════════════════════════════════
+
+async function npmApiResponse(
+  packageName: string,
+  metric:
+    | "downloads"
+    | "weekly-downloads"
+    | "version"
+): Promise<Response> {
+  try {
+    const response = await fetch(
+      `https://registry.npmjs.org/${encodeURIComponent(
+        packageName
+      )}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Laibo/0.1",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return json(
+        {
+          error: "Package not found",
+          message: "not found",
+        },
+        response.status
+      );
+    }
+
+    const data =
+      (await response.json()) as NpmPackage;
+
+    let value = "";
+
+    if (metric === "version") {
+      value =
+        data["dist-tags"]?.latest ||
+        "unknown";
+    } else {
+      const downloads =
+        await getNpmDownloads(packageName);
+
+      value = formatNumber(downloads);
+    }
+
+    return json({
+      provider: "npm",
+      target: packageName,
+      metric,
+      message: value,
+    });
+  } catch {
+    return json(
+      {
+        error: "npm request failed",
+        message: "error",
+      },
+      502
+    );
+  }
+}
+
+// ═══════════════════════════════════════
+// npm Badge
+// ═══════════════════════════════════════
+
+async function npmBadge(
+  packageName: string,
+  metric:
+    | "downloads"
+    | "weekly-downloads"
+    | "version",
+  params: URLSearchParams
+): Promise<Response> {
+  try {
+    const response = await fetch(
+      `https://registry.npmjs.org/${encodeURIComponent(
+        packageName
+      )}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Laibo/0.1",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return createBadgeResponse(
+        params.get("label") || "npm",
+        "not found",
+        params,
+        response.status
+      );
+    }
+
+    const data =
+      (await response.json()) as NpmPackage;
+
+    let value = "";
+
+    if (metric === "version") {
+      value =
+        data["dist-tags"]?.latest ||
+        "unknown";
+    } else {
+      const downloads =
+        await getNpmDownloads(packageName);
+
+      value = formatNumber(downloads);
+    }
+
+    return createBadgeResponse(
+      params.get("label") || metric,
+      params.has("message")
+        ? params.get("message") || value
+        : value,
+      params
+    );
+  } catch {
+    return createBadgeResponse(
+      params.get("label") || "npm",
+      "error",
+      params,
+      502
+    );
+  }
+}
+
+// ═══════════════════════════════════════
+// npm Downloads
+// ═══════════════════════════════════════
 
 async function getNpmDownloads(
   packageName: string
@@ -337,15 +676,16 @@ async function getNpmDownloads(
     return 0;
   }
 
-  const data = (await response.json()) as {
-    downloads?: number;
-  };
+  const data =
+    (await response.json()) as {
+      downloads?: number;
+    };
 
   return data.downloads || 0;
 }
 
 // ═══════════════════════════════════════
-// Badge
+// Badge Response
 // ═══════════════════════════════════════
 
 function createBadgeResponse(
@@ -354,12 +694,17 @@ function createBadgeResponse(
   params: URLSearchParams,
   status = 200
 ): Response {
-  const svg = createBadge(label, message, params);
+  const svg = createBadge(
+    label,
+    message,
+    params
+  );
 
   return new Response(svg, {
     status,
     headers: {
-      "content-type": "image/svg+xml; charset=utf-8",
+      "content-type":
+        "image/svg+xml; charset=utf-8",
 
       "cache-control":
         status === 200
@@ -371,191 +716,119 @@ function createBadgeResponse(
   });
 }
 
+// ═══════════════════════════════════════
+// Badge Renderer
+// ═══════════════════════════════════════
+
 function createBadge(
   label: string,
   message: string,
   params: URLSearchParams
 ): string {
-  const safeLabel = escapeXml(label);
-  const safeMessage = escapeXml(message);
+  const allowedStyles: BadgeStyle[] = [
+    "flat",
+    "flat-square",
+    "pill",
+    "plastic",
+    "for-the-badge",
+    "social",
+    "minimal",
+    "outline",
+    "soft",
+    "gradient",
+    "compact",
+    "dot",
+    "glass",
+    "neon",
+    "mono",
+    "elevated",
+    "inset",
+    "transparent",
+  ];
 
-  const style = params.get("style") || "flat";
+  const requestedStyle =
+    params.get("style");
 
-  const labelColor = safeColor(
-    params.get("labelColor"),
-    "#555"
-  );
-
-  const messageColor = safeColor(
-    params.get("messageColor") ||
-      params.get("color"),
-    "#4c1"
-  );
-
-  const textColor = safeColor(
-    params.get("textColor"),
-    "#fff"
-  );
+  const style: BadgeStyle =
+    requestedStyle &&
+    allowedStyles.includes(
+      requestedStyle as BadgeStyle
+    )
+      ? (requestedStyle as BadgeStyle)
+      : "flat";
 
   const height = clamp(
-    Number(params.get("height") || 20),
-    18,
-    40
+    Number(params.get("height") || 22),
+    16,
+    48
   );
 
   const radius = clamp(
-    Number(params.get("radius") || 3),
+    Number(params.get("radius") || 4),
     0,
     20
   );
 
-  const labelWidth = Math.max(
-    55,
-    safeLabel.length * 7 + 20
+  const fontSize = clamp(
+    Number(params.get("fontSize") || 11),
+    8,
+    18
   );
 
-  const messageWidth = Math.max(
-    45,
-    safeMessage.length * 7 + 20
-  );
+  return renderBadge({
+    label,
+    message,
+    style,
 
-  const totalWidth = labelWidth + messageWidth;
+    labelColor: safeColor(
+      params.get("labelColor"),
+      "#475569"
+    ),
 
-  const fontSize =
-    height <= 20 ? 11 :
-    height <= 24 ? 12 :
-    13;
+    messageColor: safeColor(
+      params.get("messageColor") ||
+        params.get("color"),
+      "#2563eb"
+    ),
 
-  const textY =
-    height / 2 +
-    fontSize / 2 -
-    2;
+    textColor: safeColor(
+      params.get("textColor"),
+      "#ffffff"
+    ),
 
-  if (style === "minimal") {
-    const width = Math.max(
-      80,
-      safeLabel.length * 7 +
-        safeMessage.length * 7 +
-        28
-    );
-
-    return svgStart(
-      width,
-      height,
-      safeLabel,
-      safeMessage
-    ) + `
-  <text
-    x="8"
-    y="${textY}"
-    fill="${textColor}"
-    font-family="Arial,Verdana,sans-serif"
-    font-size="${fontSize}"
-  >${safeLabel}</text>
-
-  <text
-    x="${width - 8}"
-    y="${textY}"
-    fill="${messageColor}"
-    font-family="Arial,Verdana,sans-serif"
-    font-size="${fontSize}"
-    text-anchor="end"
-  >${safeMessage}</text>
-
-</svg>`;
-  }
-
-  const actualRadius =
-    style === "pill"
-      ? height / 2
-      : radius;
-
-  return `${svgStart(
-    totalWidth,
+    radius,
     height,
-    safeLabel,
-    safeMessage
-  )}
-
-  <clipPath id="clip">
-    <rect
-      width="${totalWidth}"
-      height="${height}"
-      rx="${actualRadius}"
-    />
-  </clipPath>
-
-  <g clip-path="url(#clip)">
-    <rect
-      width="${labelWidth}"
-      height="${height}"
-      fill="${labelColor}"
-    />
-
-    <rect
-      x="${labelWidth}"
-      width="${messageWidth}"
-      height="${height}"
-      fill="${messageColor}"
-    />
-  </g>
-
-  <text
-    x="${labelWidth / 2}"
-    y="${textY}"
-    fill="${textColor}"
-    font-family="Arial,Verdana,sans-serif"
-    font-size="${fontSize}"
-    text-anchor="middle"
-  >${safeLabel}</text>
-
-  <text
-    x="${labelWidth + messageWidth / 2}"
-    y="${textY}"
-    fill="${textColor}"
-    font-family="Arial,Verdana,sans-serif"
-    font-size="${fontSize}"
-    text-anchor="middle"
-  >${safeMessage}</text>
-
-</svg>`;
-}
-
-function svgStart(
-  width: number,
-  height: number,
-  label: string,
-  message: string
-): string {
-  return `<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="${width}"
-  height="${height}"
-  role="img"
-  aria-label="${label}: ${message}"
->
-  <title>${label}: ${message}</title>`;
+    fontSize,
+  });
 }
 
 // ═══════════════════════════════════════
 // Utilities
 // ═══════════════════════════════════════
 
-function formatNumber(value: number): string {
+function formatNumber(
+  value: number
+): string {
   if (value >= 1_000_000_000) {
-    return `${(value / 1_000_000_000)
+    return `${(
+      value / 1_000_000_000
+    )
       .toFixed(1)
       .replace(/\.0$/, "")}B`;
   }
 
   if (value >= 1_000_000) {
-    return `${(value / 1_000_000)
+    return `${(
+      value / 1_000_000
+    )
       .toFixed(1)
       .replace(/\.0$/, "")}M`;
   }
 
   if (value >= 1_000) {
-    return `${(value / 1_000)
+    return `${(
+      value / 1_000
+    )
       .toFixed(1)
       .replace(/\.0$/, "")}k`;
   }
@@ -571,7 +844,9 @@ function safeColor(
     return fallback;
   }
 
-  if (/^#[0-9a-fA-F]{3,8}$/.test(value)) {
+  if (
+    /^#[0-9a-fA-F]{3,8}$/.test(value)
+  ) {
     return value;
   }
 
@@ -597,23 +872,25 @@ function clamp(
   );
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
-function json(data: unknown): Response {
+function json(
+  data: unknown,
+  status = 200
+): Response {
   return new Response(
     JSON.stringify(data, null, 2),
     {
+      status,
       headers: {
         "content-type":
           "application/json; charset=utf-8",
-        "access-control-allow-origin": "*",
+
+        "access-control-allow-origin":
+          "*",
+
+        "cache-control":
+          status === 200
+            ? "public, max-age=60, s-maxage=60"
+            : "no-cache",
       },
     }
   );
