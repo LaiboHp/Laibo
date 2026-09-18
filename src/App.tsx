@@ -1,11 +1,19 @@
-
 import { useEffect, useMemo, useState } from "react";
 import type { BadgeStyle, Provider } from "./badges/types";
 import { renderBadge } from "./badges/renderer";
 import { badgeStyles } from "./badges/styles";
+import { badgeTemplates } from "./badges/templates";
 import { providers } from "./providers";
 
 const initialProvider: Provider = "github";
+
+function getInitialTheme(): "light" | "dark" {
+  if (typeof window === "undefined") return "light";
+
+  const stored = window.localStorage.getItem("laibo-theme");
+
+  return stored === "dark" ? "dark" : "light";
+}
 
 export default function App() {
   const [provider, setProvider] = useState<Provider>(initialProvider);
@@ -17,6 +25,8 @@ export default function App() {
   const [customMessage, setCustomMessage] = useState(false);
 
   const [style, setStyle] = useState<BadgeStyle>("flat");
+  const [template, setTemplate] = useState("classic");
+
   const [labelColor, setLabelColor] = useState("#475569");
   const [messageColor, setMessageColor] = useState("#2563eb");
   const [textColor, setTextColor] = useState("#ffffff");
@@ -26,15 +36,16 @@ export default function App() {
   const [fontSize, setFontSize] = useState(11);
 
   const [loading, setLoading] = useState(false);
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("laibo-theme") || "light"
-  );
+  const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
 
   const currentProvider = providers.find((item) => item.id === provider)!;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("laibo-theme", theme);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("laibo-theme", theme);
+    }
   }, [theme]);
 
   useEffect(() => {
@@ -57,7 +68,7 @@ export default function App() {
           }
 
           path = `/api/github/${encodeURIComponent(owner)}/${encodeURIComponent(
-            repo
+            repo,
           )}/${metric}`;
         } else if (provider === "npm") {
           path = `/api/npm/${metric}/${encodeURIComponent(target)}`;
@@ -71,7 +82,7 @@ export default function App() {
         }
 
         const response = await fetch(path, {
-          signal: controller.signal
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -79,36 +90,43 @@ export default function App() {
         }
 
         const data = await response.json();
+
         setMessage(String(data.message ?? "error"));
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
           setMessage("error");
         }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     }
 
-    loadValue();
+    const timeout = setTimeout(loadValue, 250);
 
-    return () => controller.abort();
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   }, [provider, target, metric, customMessage]);
-
-
-
 
   const badgeUrl = useMemo(() => {
     let path = "";
 
     if (provider === "static") {
       path = `/static/${encodeURIComponent(label)}/${encodeURIComponent(
-        message
+        message,
       )}`;
     } else if (provider === "github") {
       const [owner, repo] = target.split("/");
 
-      path = `/github/${encodeURIComponent(owner || "")}/${encodeURIComponent(
-        repo || ""
+      if (!owner || !repo) {
+        return "";
+      }
+
+      path = `/github/${encodeURIComponent(owner)}/${encodeURIComponent(
+        repo,
       )}/${metric}`;
     } else if (provider === "npm") {
       path = `/npm/${metric}/${encodeURIComponent(target)}`;
@@ -123,19 +141,23 @@ export default function App() {
     const params = new URLSearchParams({
       label,
       style,
+      template,
       labelColor,
       messageColor,
       textColor,
       radius: String(radius),
       height: String(height),
-      fontSize: String(fontSize)
+      fontSize: String(fontSize),
     });
 
     if (customMessage) {
       params.set("message", message);
     }
 
-    return `${window.location.origin}${path}?${params.toString()}`;
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : "";
+
+    return `${origin}${path}?${params.toString()}`;
   }, [
     provider,
     target,
@@ -144,16 +166,39 @@ export default function App() {
     message,
     customMessage,
     style,
+    template,
     labelColor,
     messageColor,
     textColor,
     radius,
     height,
-    fontSize
+    fontSize,
   ]);
 
   async function copy(value: string) {
-    await navigator.clipboard.writeText(value);
+    if (!value) return;
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+
+      const textarea = document.createElement("textarea");
+
+      textarea.value = value;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+
+      document.body.appendChild(textarea);
+
+      textarea.select();
+      document.execCommand("copy");
+
+      document.body.removeChild(textarea);
+    } catch (error) {
+      console.error("Copy failed:", error);
+    }
   }
 
   function selectProvider(next: Provider) {
@@ -161,7 +206,9 @@ export default function App() {
 
     const nextProvider = providers.find((item) => item.id === next);
 
-    if (!nextProvider) return;
+    if (!nextProvider || nextProvider.metrics.length === 0) {
+      return;
+    }
 
     setMetric(nextProvider.metrics[0].id);
 
@@ -174,6 +221,23 @@ export default function App() {
     }
   }
 
+  function applyTemplate(templateId: string) {
+    const selected = badgeTemplates.find(
+      (item) => item.id === templateId,
+    );
+
+    if (!selected) return;
+
+    setTemplate(templateId);
+    setStyle(selected.options.style);
+    setLabelColor(selected.options.labelColor);
+    setMessageColor(selected.options.messageColor);
+    setTextColor(selected.options.textColor);
+    setRadius(selected.options.radius);
+    setHeight(selected.options.height);
+    setFontSize(selected.options.fontSize);
+  }
+
   return (
     <div className="app">
       <header className="nav">
@@ -184,14 +248,17 @@ export default function App() {
 
         <nav>
           <a href="#builder">Builder</a>
-          <a href="#templates">Styles</a>
+          <a href="#templates">Templates</a>
+          <a href="#styles">Styles</a>
           <a href="#providers">Providers</a>
         </nav>
 
         <button
           className="theme-button"
           onClick={() =>
-            setTheme((value) => (value === "light" ? "dark" : "light"))
+            setTheme((value) =>
+              value === "light" ? "dark" : "light",
+            )
           }
           aria-label="Toggle theme"
         >
@@ -211,7 +278,9 @@ export default function App() {
               {providers.map((item) => (
                 <button
                   key={item.id}
-                  className={provider === item.id ? "selected" : ""}
+                  className={
+                    provider === item.id ? "selected" : ""
+                  }
                   onClick={() => selectProvider(item.id)}
                 >
                   {item.name}
@@ -233,7 +302,9 @@ export default function App() {
 
                 <input
                   value={target}
-                  onChange={(event) => setTarget(event.target.value)}
+                  onChange={(event) =>
+                    setTarget(event.target.value)
+                  }
                   placeholder={
                     provider === "github"
                       ? "owner/repository"
@@ -249,7 +320,9 @@ export default function App() {
 
                 <select
                   value={metric}
-                  onChange={(event) => setMetric(event.target.value)}
+                  onChange={(event) =>
+                    setMetric(event.target.value)
+                  }
                 >
                   {currentProvider.metrics.map((item) => (
                     <option key={item.id} value={item.id}>
@@ -264,7 +337,9 @@ export default function App() {
 
                 <input
                   value={label}
-                  onChange={(event) => setLabel(event.target.value)}
+                  onChange={(event) =>
+                    setLabel(event.target.value)
+                  }
                 />
               </label>
 
@@ -274,7 +349,9 @@ export default function App() {
                 <input
                   value={message}
                   disabled={!customMessage}
-                  onChange={(event) => setMessage(event.target.value)}
+                  onChange={(event) =>
+                    setMessage(event.target.value)
+                  }
                 />
               </label>
 
@@ -286,6 +363,7 @@ export default function App() {
                     setCustomMessage(event.target.checked)
                   }
                 />
+
                 <span>Custom message</span>
               </label>
             </div>
@@ -298,8 +376,13 @@ export default function App() {
                   {badgeStyles.map((item) => (
                     <button
                       key={item.id}
-                      className={style === item.id ? "selected" : ""}
-                      onClick={() => setStyle(item.id)}
+                      className={
+                        style === item.id ? "selected" : ""
+                      }
+                      onClick={() => {
+                        setTemplate("custom");
+                        setStyle(item.id);
+                      }}
                     >
                       {item.name}
                     </button>
@@ -361,100 +444,179 @@ export default function App() {
               <span className="status-dot" />
             </div>
 
-<div className="preview-stage">
-  <div className="preview-badge">
-    <img
-      src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-        renderBadge({
-          label,
-          message,
-          style,
-          labelColor,
-          messageColor,
-          textColor,
-          radius,
-          height,
-          fontSize,
-        }),
-      )}`}
-      alt="Badge preview"
-      draggable={false}
-    />
-  </div>
-</div>
-
-            <div className="output">
-              <span>URL</span>
-              <code>{badgeUrl}</code>
-
-              <div className="actions">
-                <button onClick={() => copy(badgeUrl)}>Copy URL</button>
-
-<button
-  onClick={() =>
-    copy(`![${label}: ${message}](${badgeUrl})`)
-  }
->
-  Copy Markdown
-</button>
-                
+            <div className="preview-stage">
+              <div className="preview-badge">
+                <img
+                  src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+                    renderBadge({
+                      label,
+                      message,
+                      style,
+                      template:
+                        template === "custom"
+                          ? undefined
+                          : (template as
+                              | "classic"
+                              | "github"
+                              | "npm"
+                              | "modrinth"
+                              | "discord"
+                              | "build"
+                              | "downloads"
+                              | "version"
+                              | "license"
+                              | "coverage"
+                              | "release"
+                              | "opensource"
+                              | "documentation"
+                              | "website"
+                              | "security"),
+                      labelColor,
+                      messageColor,
+                      textColor,
+                      radius,
+                      height,
+                      fontSize,
+                    }),
+                  )}`}
+                  alt="Badge preview"
+                  draggable={false}
+                />
               </div>
             </div>
 
-<div className="output">
-  <span>SVG</span>
-  <code>SVG badge generated by Laibo</code>
+            <div className="output">
+              <span>URL</span>
+              <code>{badgeUrl || "—"}</code>
 
-  <button
-    onClick={async () => {
-      const response = await fetch(badgeUrl);
-      const svg = await response.text();
-      await copy(svg);
-    }}
-  >
-    Copy SVG
-  </button>
-</div>
+              <div className="actions">
+                <button
+                  onClick={() => copy(badgeUrl)}
+                  disabled={!badgeUrl}
+                >
+                  Copy URL
+                </button>
 
+                <button
+                  onClick={() =>
+                    copy(
+                      `![${label}: ${message}](${badgeUrl})`,
+                    )
+                  }
+                  disabled={!badgeUrl}
+                >
+                  Copy Markdown
+                </button>
+              </div>
+            </div>
+
+            <div className="output">
+              <span>SVG</span>
+              <code>SVG badge generated by Laibo</code>
+
+              <button
+                disabled={!badgeUrl}
+                onClick={async () => {
+                  if (!badgeUrl) return;
+
+                  try {
+                    const response = await fetch(badgeUrl);
+                    const svg = await response.text();
+
+                    await copy(svg);
+                  } catch (error) {
+                    console.error(
+                      "Failed to copy SVG:",
+                      error,
+                    );
+                  }
+                }}
+              >
+                Copy SVG
+              </button>
+            </div>
           </aside>
         </section>
 
         <section id="templates" className="section">
-          <h2>Styles</h2>
-          <p>Choose a style for your badge.</p>
+          <h2>Templates</h2>
+          <p>Start from a ready-made badge design.</p>
 
           <div className="template-list">
+            {badgeTemplates.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`template-preview ${
+                  template === item.id ? "active" : ""
+                }`}
+                onClick={() => applyTemplate(item.id)}
+              >
+                <div className="template-badge">
+                  <img
+                    src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+                      renderBadge({
+                        label,
+                        message,
+                        ...item.options,
+                      }),
+                    )}`}
+                    alt={`${item.name} badge template`}
+                    draggable={false}
+                  />
+                </div>
 
-{badgeStyles.map((item) => (
-  <button
-    key={item.id}
-    type="button"
-    className={`template-preview ${
-      style === item.id ? "active" : ""
-    }`}
-    onClick={() => setStyle(item.id)}
-  >
-    <img
-      src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-        renderBadge({
-          label,
-          message,
-          style: item.id,
-          labelColor,
-          messageColor,
-          textColor,
-          radius,
-          height,
-          fontSize,
-        }),
-      )}`}
-      alt={`${item.name} badge style`}
-    />
+                <span>{item.name}</span>
+                <small>{item.description}</small>
+              </button>
+            ))}
+          </div>
+        </section>
 
-    <span>{item.name}</span>
-  </button>
-))}
+        <section id="styles" className="section">
+          <h2>Styles</h2>
+          <p>Choose a rendering style for your badge.</p>
 
+          <div className="template-list">
+            {badgeStyles.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`template-preview ${
+                  template === "custom" &&
+                  style === item.id
+                    ? "active"
+                    : ""
+                }`}
+                onClick={() => {
+                  setTemplate("custom");
+                  setStyle(item.id);
+                }}
+              >
+                <div className="template-badge">
+                  <img
+                    src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+                      renderBadge({
+                        label,
+                        message,
+                        style: item.id,
+                        labelColor,
+                        messageColor,
+                        textColor,
+                        radius,
+                        height,
+                        fontSize,
+                      }),
+                    )}`}
+                    alt={`${item.name} badge style`}
+                    draggable={false}
+                  />
+                </div>
+
+                <span>{item.name}</span>
+                <small>{item.description}</small>
+              </button>
+            ))}
           </div>
         </section>
 
@@ -484,7 +646,7 @@ export default function App() {
 function ColorInput({
   label,
   value,
-  onChange
+  onChange,
 }: {
   label: string;
   value: string;
@@ -497,13 +659,21 @@ function ColorInput({
       <div className="color-input">
         <input
           type="color"
-          value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : "#000000"}
-          onChange={(event) => onChange(event.target.value)}
+          value={
+            /^#[0-9a-fA-F]{6}$/.test(value)
+              ? value
+              : "#000000"
+          }
+          onChange={(event) =>
+            onChange(event.target.value)
+          }
         />
 
         <input
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) =>
+            onChange(event.target.value)
+          }
         />
       </div>
     </label>
@@ -515,7 +685,7 @@ function Range({
   value,
   min,
   max,
-  onChange
+  onChange,
 }: {
   label: string;
   value: number;
@@ -534,9 +704,10 @@ function Range({
         min={min}
         max={max}
         value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
+        onChange={(event) =>
+          onChange(Number(event.target.value))
+        }
       />
     </label>
   );
 }
-

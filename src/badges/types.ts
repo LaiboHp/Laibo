@@ -32,10 +32,28 @@ export type BadgeStyle =
   | "inset"
   | "transparent";
 
+export type BadgeTemplateId =
+  | "classic"
+  | "github"
+  | "npm"
+  | "modrinth"
+  | "discord"
+  | "build"
+  | "downloads"
+  | "version"
+  | "license"
+  | "coverage"
+  | "release"
+  | "opensource"
+  | "documentation"
+  | "website"
+  | "security";
+
 export interface BadgeOptions {
   label: string;
   message: string;
   style: BadgeStyle;
+  template?: BadgeTemplateId;
   labelColor: string;
   messageColor: string;
   textColor: string;
