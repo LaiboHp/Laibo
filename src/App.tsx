@@ -163,7 +163,7 @@ export default function App() {
       params.set("message", message);
     }
 
-    return `${path}?${params.toString()}`;
+    return `${window.location.origin}${path}?${params.toString()}`;
   }, [
     provider,
     target,
@@ -400,15 +400,14 @@ export default function App() {
               <div className="actions">
                 <button onClick={() => copy(badgeUrl)}>Copy URL</button>
 
-                <button
-                  onClick={() =>
-                    copy(
-                      `![${label}: ${message}](${location.origin}${badgeUrl})`
-                    )
-                  }
-                >
-                  Copy Markdown
-                </button>
+<button
+  onClick={() =>
+    copy(`![${label}: ${message}](${badgeUrl})`)
+  }
+>
+  Copy Markdown
+</button>
+                
               </div>
             </div>
 
